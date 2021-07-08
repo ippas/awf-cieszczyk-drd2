@@ -4,15 +4,33 @@ output:
   html_document:
     df_print: paged
   pdf_document: default
+date: "_Ostatnio sporządzony w dniu `r format(Sys.time(), '%d %B, %Y')`_"
+
+knit: (function(input, ...) {
+    rmarkdown::render(
+      input,
+      output_file = paste0(
+        xfun::sans_ext(input), '-tmp.html'
+      ),
+      envir = globalenv()
+    )
+  })
 ---
 
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+    echo = FALSE,
+    cache = TRUE
+)
+```
 
 ```{r eval=FALSE, include=FALSE}
 install.packages("readxl")
 install.packages("dplyr")
 install.packages("stringr")
 install.packages("HardyWeinberg")
-# install.packages("kableExtra")
+install.packages("haplo.stats")
+install.packages("kableExtra")
 ```
 
 ```{r message=FALSE}
@@ -21,38 +39,105 @@ library(stringr)
 library(dplyr)
 library(HardyWeinberg)
 library(knitr)
+library(tidyverse)
+library(ggpubr)
+library(rstatix)
+library(datarium)
+library(haplo.stats)
+library(kableExtra)
+library(scales)
 ```
 
 
-### Wczytanie danych
+## Wczytanie danych
 
-Wejściowy arkusz został nieco zmodyfikowany - usunięte scalenia komórek
+Wejściowy arkusz został nieco zmodyfikowany - usunięte scalenia komórek w nagłówku. Poniżej znajdują się otrzymane dane.
 
 ```{r, message=FALSE}
-raw_data <- read_excel('wyniki-DRD2-unmerged-header.xls')
-subheader <- raw_data[1, ]
+read_drd2_excel <- function(path){
+    raw_data <- read_excel(path)
+    subheader <- raw_data[1, ]
+    
+    numeric_cols <- unname(!is.na(subheader))[1, ]
+    merged_header <- colnames(subheader)[numeric_cols]
+    merged_header <- str_replace(merged_header, '\\.{3}\\d{1,2}', '')
+    new_cols <- paste0(merged_header, c('_przed', '_po'))
+    colnames(raw_data)[numeric_cols] <- new_cols
+    
+    data <- read_excel(path, skip=1)
+    colnames(data) <- colnames(raw_data)
+    data %>% 
+        mutate(id = paste(`Nr`, `Lp.`, sep='_'))
+}
 
-numeric_cols <- unname(!is.na(subheader))[1, ]
-merged_header <- colnames(subheader)[numeric_cols]
-merged_header <- str_replace(merged_header, '\\.{3}\\d{1,2}', '')
-new_cols <- paste0(merged_header, c('_przed', '_po'))
-colnames(raw_data)[numeric_cols] <- new_cols
-
-data <- read_excel('wyniki-DRD2-unmerged-header.xls', skip=1)
-colnames(data) <- colnames(raw_data)
-data %>% 
-  mutate(id=paste(`Nr`, `Lp.`, sep='_')) ->
-  data
-
-data
+(drd2 <- read_drd2_excel('data/wyniki-DRD2-unmerged-header.xls'))
 ```
 
-### Hardy-Weinberg equilibrium
+## Przegląd danych
+
+Obliczając wzrost uczestników na podstawie BMI i masy ciała w niektórych przypadkach otrzymujemy różne wartości przed i po treningu. W tabeli poniżej są przypadki, gdy różnica ta wyniosła powyżej 2cm.
+```{r}
+drd2 %>% 
+    mutate(height_przed = sqrt(`Masa ciała (kg)_przed` / `Indeks masy ciała BMI_przed`)) %>% 
+    mutate(height_po = sqrt(`Masa ciała (kg)_po` / `Indeks masy ciała BMI_po`)) %>% 
+    mutate(height_diff = abs(height_przed - height_po) * 100) %>% 
+    arrange(desc(height_diff)) %>% 
+    select(`Lp.`, Nr, contains('height_diff'), contains('Masa ciała'), contains('BMI')) %>% 
+    filter(height_diff > 2) %>%
+    arrange(`Lp.`) %>% 
+    mutate(height_diff = round(height_diff, 2)) %>% 
+    kbl() %>% 
+    kable_styling(bootstrap_options = c("bordered", "hover", "condensed")) %>% 
+    column_spec(3, background = "#ecc6c6")
+
+
+# drd2_training
+# ggboxplot(drd2_training, x = c("Training", "DRD2 rs1076560"), y = "Indeks BMR (kJ)",
+#                 color = "DRD2 rs1076560", palette =c("#00AFBB", "#E7B800", "#FC4E07"),
+#                 add = "jitter", shape = "DRD2 rs1076560")
+```
+
+Przeliczając indeks BMR z _kJ_ na _kcal_ również otrzymujemy różne wartości. W niektórych przypadkach są one dosyć znaczne. W tabeli poniżej znajdują się te wiersze, gdzie ta różnica wyniosła powyżej 5kcal.
+```{r}
+r <- 0.239005736
+
+drd2 %>% 
+    mutate(`BMR kJ_przed (kcal)` = `Indeks BMR (kJ)_przed` * r) %>% 
+    mutate(`BMR kJ_po (kcal)` = `Indeks BMR (kJ)_po` * r) %>% 
+    mutate(`BMR diff przed (kcal)` = abs(`Indeks BMR (kcal)_przed` - `BMR kJ_przed (kcal)`)) %>% 
+    mutate(`BMR diff po (kcal)` = abs(`Indeks BMR (kcal)_po` - `BMR kJ_po (kcal)`)) %>% 
+    select(`Lp.`, Nr, contains('diff'), contains('BMR (')) %>% 
+    filter(`BMR diff przed (kcal)` > 5 | `BMR diff po (kcal)` > 5) %>% 
+    kbl() %>% 
+    kable_styling(bootstrap_options = c("bordered", "hover", "condensed")) %>% 
+    column_spec(c(3, 4), background = "#ecc6c6")
+```
+
+Procentowa masa tłuszczowa została porownana ze stosunkiem masy tłuszczowej w kg do całkowitej masy ciała. W ten sposób pojawiło się kilka rozbieżności.
 
 ```{r}
-(rses <- str_subset(colnames(data), "rs"))
+drd2 %>% 
+    select(`Lp.`, Nr, contains('Masa ciała'), contains('masy tłuszczowej')) %>% 
+    mutate(`Masa tłuszczowa %_przed` = `Wielkość masy tłuszczowej (kg)_przed` / `Masa ciała (kg)_przed` * 100) %>% 
+    mutate(`Masa tłuszczowa %_po` = `Wielkość masy tłuszczowej (kg)_po` / `Masa ciała (kg)_po` * 100) %>% 
+    mutate(`Masa tłuszczowa diff_przed` = abs(`Masa tłuszczowa %_przed` - `Procent masy tłuszczowej (%)_przed`)) %>% 
+    mutate(`Masa tłuszczowa diff_po` = abs(`Masa tłuszczowa %_po` - `Procent masy tłuszczowej (%)_po`)) %>% 
+    filter(`Masa tłuszczowa diff_przed` > 0.5) %>% 
+    filter(`Masa tłuszczowa diff_po` > 0.5) %>%  
+    select(`Lp.`, Nr, contains('diff'), everything()) %>% 
+    kbl() %>% 
+    kable_styling(bootstrap_options = c("bordered", "hover", "condensed")) %>% 
+    column_spec(c(3, 4), background = "#ecc6c6")
+```
+
+
+## Hardy-Weinberg equilibrium
+
+```{r include=FALSE}
+drd2 %>% 
+    select(contains('DRD2'))
+
 genotypes <- list(
-  "DRD2 rs1076560" = c("CC", "C/A", "AA"),
   "DRD2 rs1076560" = c("CC", "C/A", "AA"),
   "DRD2 rs12364283" = c("GG", "G/A", "AA"),
   "DRD2 rs1799732" = c("--", "C (-)", "CC"),
@@ -60,19 +145,376 @@ genotypes <- list(
   "DRD2 rs1800498" = c("CC", "C/T", "TT")
 )
 
-pvals <- numeric()
-for (rs_name in names(genotypes)) {
-  rs <- factor(pull(data, rs_name), levels = genotypes[[rs_name]])
-  stopifnot(!is.na(rs))
-  genotype_counts <- table(rs)
-  X <- as.vector(genotype_counts)
-  names(X) <- c("AA", "AB", "BB")
-  result <- HWChisq(X, verbose = FALSE)
-  pvals <- c(pvals, result$pval)
+
+check_hw_equilibrium <- function(data, rsids){
+    pvals <- numeric()
+    for (rs_name in names(genotypes)) {
+        rs <- factor(pull(data, rs_name), levels = genotypes[[rs_name]])
+        stopifnot(!is.na(rs))
+        
+        genotype_counts <- table(rs)
+        X <- as.vector(genotype_counts)
+        names(X) <- c("AA", "AB", "BB")
+        
+        result <- HWChisq(X, verbose = FALSE)
+        pvals <- c(pvals, result$pval)
+    }
+    return(pvals)
 }
+
+hw_chisq_pvals <- check_hw_equilibrium(drd2, names(genotypes))
 ```
 
 ```{r}
-tibble(rs = names(genotypes), p = pvals)
+tibble(rs = names(genotypes), p = hw_chisq_pvals)
 ```
 
+
+## Two-way mixed ANOVA
+```{r list_parameters}
+get_params <- function(data){
+    data %>% 
+        select(contains('_po')) %>% 
+        colnames %>%  
+        str_sub(end = -4)
+}
+
+parameters <- get_params(drd2)
+```
+
+```{r compute_anova, cache=TRUE}
+compute_anova <- function(data, parameters, rsids){
+    results <- list(
+        "rsid" = vector(mode = "character"),
+        "Parameter" = vector(mode = "character"),
+        "Genotype" = vector(mode = "numeric"),
+        "Training" = vector(mode = "numeric"),
+        "Genotype x Training" = vector(mode = "numeric")
+    )
+    
+    for (rsid in rsids) {
+        for (param in parameters) {
+            param_before <- paste0(param, "_przed")
+            param_after <- paste0(param, "_po")
+            
+            data %>% 
+                rename(
+                    group = {{ rsid }},
+                    t1 = {{ param_before }},
+                    t2 = {{ param_after }}
+                ) %>% 
+                select(id, group, t1, t2) %>% 
+                gather(key = "time", value = "score", t1, t2) ->
+                data_anova
+            
+            res.aov <- anova_test(
+                data = data_anova,
+                dv = score,
+                wid = id,
+                between = group,
+                within = time
+            )
+            
+            pvals <- res.aov$p
+            names(pvals) <- res.aov$Effect
+            
+            results$"rsid" <- c(results$"rsid", rsid)
+            results$"Parameter" <- c(results$"Parameter", param)
+            results$"Genotype" <- c(results$"Genotype", pvals[['group']])
+            results$"Training" <- c(results$"Training", pvals[['time']])
+            results$"Genotype x Training" <- c(
+                results$"Genotype x Training",
+                pvals[['group:time']]
+            )
+        }
+    }
+    return(results)
+}
+
+anova_results <- compute_anova(drd2, parameters, names(genotypes))
+anova_results <- as_tibble(anova_results)
+```
+
+<!-- Obliczenie średnich w grupach -->
+```{r compute_mean_sd, message=FALSE}
+add_training_as_column <- function(data, rsids = names(genotypes), params = parameters) {
+    data %>% 
+        select(id, `Lp.`, Nr, contains('DRD2')) %>% 
+        left_join(tibble(Training = c('przed', 'po')), by = character()) ->
+        data_longer
+    
+    for (param in params) {
+        data %>%
+            select(id, `Lp.`, Nr, contains('DRD2'), contains(param)) %>% 
+            gather(key = "Parameter", value = {{ param }}, contains(param)) %>% 
+            mutate(
+                Training = str_split(pull(., Parameter), "_", simplify = T)[, 2]
+            ) %>% 
+            select(-Parameter) ->
+            x
+        data_longer %>% 
+            left_join(x, by = c('id', 'Lp.', 'Nr', rsids, 'Training')) ->
+            data_longer
+    }
+    data_longer
+}
+
+drd2_training <- add_training_as_column(drd2)
+```
+
+```{r normality_tests, eval=FALSE, include=FALSE}
+data_w %>% 
+    group_by(training, `DRD2 rs1800498`) %>% 
+    rename(y = `Indeks BMR (kcal)`) %>% 
+    shapiro_test(y)
+data_w %>% 
+    rename(y = `Indeks BMR (kcal)`) %>% 
+    select(training, `DRD2 rs1800498`, y) %>% 
+    filter(`DRD2 rs1800498` == 'CC', training == 'po') %>% 
+    pull(y) %>% hist
+data_w %>% 
+    rename(y = `Indeks BMR (kcal)`) %>% 
+    select(training, `DRD2 rs1800498`, y) %>% 
+    filter(`DRD2 rs1800498` == 'TT', training == 'po') %>% 
+    pull(y) %>% hist
+```
+
+```{r results='asis', message=FALSE}
+suff_cut <- function(df, n){
+    df %>% 
+        select(contains('_przed'), contains('_po')) %>% 
+        colnames %>% 
+        str_split(pattern = '_', simplify = TRUE) ->
+        genotypes
+    unique(genotypes[, 1])
+}
+
+compute_group_mean_sd <- function(data, rsid, params = parameters) {
+    data %>% 
+        group_by(across(c(all_of(rsid), Training))) %>% 
+        summarise(n = n()) ->
+        data_counts
+    data %>% 
+        group_by(across(c(all_of(rsid), Training))) %>% 
+        summarise(across(
+            `Masa ciała (kg)`:last_col(),
+            list(
+                'mean' = function(x) { round(mean(x), 2) },
+                'sd' = function(x) { round(sd(x), 2) }
+            )
+        ), .groups = 'keep') %>%
+        ungroup() ->
+        data_mean_sd
+    data_mean_sd %>% 
+        full_join(data_counts, by = c(rsid, "Training")) %>% 
+        mutate('{rsid}' := paste(.data[[rsid]], paste0('(n=', n, ')'))) %>% 
+        select(-n) ->
+        data_mean_sd
+    
+    for (param in parameters){
+        mean_col = paste0(param, '_mean')
+        sd_col = paste0(param, '_sd')
+        data_mean_sd %>% 
+            mutate(
+                '{param}' := paste(.data[[mean_col]], .data[[sd_col]], sep = '±'),
+                .keep = "unused"
+            ) ->
+            data_mean_sd
+    }
+    data_mean_sd %>% 
+        arrange(.data[[rsid]], desc(Training)) %>% 
+        mutate(head = paste(.data[[rsid]], Training, sep = "_")) %>% 
+        select(-contains(rsid), -Training) %>% 
+        pivot_longer(-head, names_to = "Parameter") %>% 
+        pivot_wider(names_from = head, values_from = value) ->
+        data_summary
+    return(data_summary)
+}
+
+anova_summary_table <- function(data, anova_data, rsid) {
+    data_summary <- compute_group_mean_sd(data, rsid)
+    anova_data %>% 
+        filter(rsid == {{ rsid }}) %>% 
+        select(-rsid) %>% 
+        right_join(data_summary, by = "Parameter") %>% 
+        relocate(Genotype:`Genotype x Training`, .after = last_col()) ->
+        df_kbl
+    
+    n_col <- dim(df_kbl)[2]
+    df_kbl %>% 
+        kbl(digits = 3, caption = rsid) %>% 
+        kable_styling(font_size = 12, bootstrap_options = c("bordered", "hover", "condensed")) %>% 
+        column_spec(1, width = "3cm") %>%
+        column_spec(2:(n_col-3), width = "3cm") %>%
+        column_spec((n_col-3):n_col, width = "1.5cm") %>%
+        column_spec(n_col - 2, bold = df_kbl$Genotype < 0.05) %>% 
+        column_spec(n_col - 1, bold = df_kbl$Training < 0.05) %>% 
+        column_spec(n_col, bold = df_kbl$`Genotype x Training` < 0.05) %>% 
+        add_header_above(data.frame(c(" ", suff_cut(df_kbl, n_col), "p values"), c(1, rep(2, (n_col - 4) / 2), 3))) %>% 
+        add_header_above(data.frame(c(" ", paste0(rsid, " genotypes"), "p values"), c(1, n_col - 4, 3)))
+}
+
+for (rsid in names(genotypes)) {
+    anova_summary_table(drd2_training, anova_results, rsid) %>% 
+        print
+}
+```
+
+
+## Analiza haplotypów
+
+Bez parametru _Kontrola lipidogramu_.
+
+Zmienną zależną jest procentowa zmiana parametru: $\left(\frac{param_{po}}{param_{przed}} - 1\right) \cdot 100$
+
+```{r}
+split_snps <- function(data) {
+    data %>%
+      select(contains('DRD2')) %>%
+      
+      separate(`DRD2 rs1076560`, c("DRD2 rs100 a1", "a2"), sep=1, remove = F) %>%
+      mutate(`DRD2 rs100 a2` = str_sub(a2, start = -1)) %>%
+      
+      separate(`DRD2 rs12364283`, c("DRD2 rs123 a1", "a2"), sep=1, remove = F) %>%
+      mutate(`DRD2 rs123 a2` = str_sub(a2, start = -1)) %>%
+    
+      separate(`DRD2 rs1799732`, c("DRD2 rs172 a1", "a2"), sep=1, remove = F) %>%
+      mutate(`DRD2 rs172 a2` = str_replace(str_sub(a2, start = -1), '\\)', '-')) %>%
+    
+      separate(`DRD2 rs1800497`, c("DRD2 rs187 a1", "a2"), sep=1, remove = F) %>%
+      mutate(`DRD2 rs187 a2` = str_sub(a2, start = -1)) %>%
+    
+      separate(`DRD2 rs1800498`, c("DRD2 rs188 a1", "a2"), sep=1, remove = F) %>%
+      mutate(`DRD2 rs188 a2` = str_sub(a2, start = -1)) %>%
+      
+      select(order(colnames(.))) %>% 
+      
+      select(contains('DRD2') & (contains('a1') | contains('a2')))
+}
+
+# drd2_alleles <- split_snps(drd2)
+```
+ 
+```{r message=FALSE, results='asis'}
+compute_training_ratio <- function(data, params = parameters){
+    ratio <- function(x, y) {
+        (x / y - 1) * 100
+    }
+    hdata <- data
+    for (param in params){
+        if (param == "Kontrola lipidogramu"){
+            next
+            # hdata %>%
+            #     mutate(
+            #         `Kontrola lipidogramu_y` = ratio(
+            #             .data[[paste0(param, '_po')]],
+            #             .data[[paste0(param, '_przed')]]
+            #         ),
+            #         .keep = 'unused'
+            #     ) ->
+            #     hdata
+        }
+        hdata %>%
+            mutate(
+                '{ paste0(param, "_y") }' := ratio(
+                    .data[[paste0(param, '_po')]],
+                    .data[[paste0(param, '_przed')]]
+                ),
+                .keep = 'unused'
+            ) ->
+            hdata
+    }
+    hdata
+}
+
+analyse_haplotypes <- function(data) {
+    haplo <- tibble(geno = character(), coef = numeric(), se = numeric(), t.stat = numeric(), pval = numeric(), param = character())
+    
+    data_alleles <- split_snps(data)
+    data_geno <- compute_training_ratio(data)
+    
+    shd <- setupGeno(as.matrix(data_alleles), locus.label = names(genotypes))
+    data.frame(geno = shd) %>% 
+        bind_cols(data_geno %>% select(contains('_y'))) ->
+        md
+    
+    for (param in parameters){
+        if (param == "Kontrola lipidogramu"){
+            next
+        }
+        y = paste0(param, '_y')
+        md %>%
+            rename(y = {{ y }}) ->
+            md_data
+        h <- haplo.glm(y ~ geno, data = md_data)  # , control = haplo.glm.control(keep.rare.haplo=FALSE))
+        sh <- summary(h)
+        as_tibble(sh$coefficients, rownames = "geno") %>%
+            mutate(param = param) ->
+            haplo_to_join
+        haplo <- full_join(haplo, haplo_to_join)
+    }
+    return(list("haplo" = haplo, "sh" = sh))
+}
+
+
+H <- analyse_haplotypes(drd2)
+haplo <- H[['haplo']]
+sh <- H[['sh']]
+```
+ 
+```{r message=FALSE, results='asis'}
+haplotypes_summary_table <- function(haplo) {
+    haplo %>% 
+        pivot_longer(-all_of(c('geno', 'param')), names_to = "parameter") %>% 
+        mutate(head = paste(geno, parameter, sep = "_")) %>% 
+        select(-geno, -parameter) %>% 
+        pivot_wider(names_from = head, values_from = value) %>% 
+        select(-contains("Intercept")) %>% 
+        select(
+            param,
+            matches('geno\\.(\\d{1,2}|rare)_'),
+            -contains('_se'),
+            # -contains('_coef'),
+            -contains('_t.stat'),
+        ) ->
+        out_data
+    
+    as_tibble(sh$haplotypes, rownames = "geno") %>%
+        mutate(haplo = paste(`loc.1`, `loc.2`, `loc.3`, `loc.4`, `loc.5`, sep = "/")) %>% 
+        select(-contains('loc.')) ->
+        haplotypes
+    haplotypes[haplotypes$geno == 'geno.rare', 'haplo'] <- '\\*/\\*/\\*/\\*/\\*'
+    
+    # dopasuj częstotliwość i haplotyp do kolumn (aby zachować kolejność)
+    as_tibble(str_split_fixed(colnames(out_data), pattern = '_', n = 2), .name_repair = "universal") %>% 
+        rename(geno = `...1`) %>% 
+        merge(haplotypes) %>% 
+        select(-`...2`) %>% 
+        rename(freq = `hap.freq`) %>% 
+        distinct() ->
+        haplo_map
+    which(colnames(out_data) == 'geno.2_pval')
+    n_haplo <- 8
+    
+    out_data %>% 
+        kbl(digits = 4) %>%  # , col.names = c('Parameter', rep(c('coef', 'pval'), n_haplo))) %>%
+        kable_styling(font_size = 12, bootstrap_options = c("bordered", "hover", "condensed")) %>% 
+        # column_spec(1, width = "3cm") %>%
+        # column_spec(2:(n-3), width = "3cm") %>%
+        # column_spec((n-3):n, width = "1.5cm") %>%
+        column_spec(3, bold = out_data$`geno.4_pval` < 0.05) %>%
+        column_spec(5, bold = out_data$`geno.7_pval` < 0.05) %>%
+        column_spec(7, bold = out_data$`geno.8_pval` < 0.05) %>%
+        column_spec(9, bold = out_data$`geno.11_pval` < 0.05) %>%
+        column_spec(11, bold = out_data$`geno.14_pval` < 0.05) %>%
+        column_spec(13, bold = out_data$`geno.15_pval` < 0.05) %>%
+        column_spec(15, bold = out_data$`geno.16_pval` < 0.05) %>%
+        column_spec(17, bold = out_data$`geno.rare_pval` < 0.05) %>%
+        add_header_above(data.frame(c(" ", percent(haplo_map$freq, 0.01)), c(1, rep(2, n_haplo)))) %>%
+        add_header_above(data.frame(c(" ", haplo_map$haplo), c(1, rep(2, n_haplo))))
+}
+
+haplotypes_summary_table(haplo) %>% 
+    print
+```
+ 
