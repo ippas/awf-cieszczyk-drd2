@@ -446,7 +446,7 @@ analyse_haplotypes <- function(data) {
         md %>%
             rename(y = {{ y }}) ->
             md_data
-        h <- haplo.glm(y ~ geno, data = md_data)  # , control = haplo.glm.control(keep.rare.haplo=FALSE))
+        h <- haplo.glm(y ~ geno, data = md_data, control = haplo.glm.control(keep.rare.haplo=FALSE))
         sh <- summary(h)
         as_tibble(sh$coefficients, rownames = "geno") %>%
             mutate(param = param) ->
@@ -494,7 +494,7 @@ haplotypes_summary_table <- function(haplo) {
         distinct() ->
         haplo_map
     which(colnames(out_data) == 'geno.2_pval')
-    n_haplo <- 8
+    n_haplo <- 7
     
     out_data %>% 
         kbl(digits = 4) %>%  # , col.names = c('Parameter', rep(c('coef', 'pval'), n_haplo))) %>%
@@ -509,7 +509,7 @@ haplotypes_summary_table <- function(haplo) {
         column_spec(11, bold = out_data$`geno.14_pval` < 0.05) %>%
         column_spec(13, bold = out_data$`geno.15_pval` < 0.05) %>%
         column_spec(15, bold = out_data$`geno.16_pval` < 0.05) %>%
-        column_spec(17, bold = out_data$`geno.rare_pval` < 0.05) %>%
+        # column_spec(17, bold = out_data$`geno.rare_pval` < 0.05) %>%
         add_header_above(data.frame(c(" ", percent(haplo_map$freq, 0.01)), c(1, rep(2, n_haplo)))) %>%
         add_header_above(data.frame(c(" ", haplo_map$haplo), c(1, rep(2, n_haplo))))
 }
