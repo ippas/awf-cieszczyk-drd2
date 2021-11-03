@@ -458,9 +458,10 @@ analyse_haplotypes <- function(data) {
         }
         y = paste0(param, '_y')
         md %>%
-            rename(y = {{ y }}) ->
+            rename(y = {{ y }}) %>%
+            mutate(przed = data[[paste0(param, '_przed')]]) ->
             md_data
-        h <- haplo.glm(y ~ geno, data = md_data, control = haplo.glm.control(keep.rare.haplo=FALSE))
+        h <- haplo.glm(y ~ geno + przed, data = md_data, control = haplo.glm.control(keep.rare.haplo=FALSE))
         sh <- summary(h)
         as_tibble(sh$coefficients, rownames = "geno") %>%
             mutate(param = param) ->
