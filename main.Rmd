@@ -231,6 +231,20 @@ compute_anova <- function(data, parameters, rsids){
     return(results)
 }
 
+drd2 <- drd2 %>%
+    mutate(`DRD2 rs1076560 dom` = str_replace(`DRD2 rs1076560`, 'C/A', 'AA')) %>%
+    relocate(`DRD2 rs1076560 dom`, .before = `DRD2 rs1076560`) %>%
+
+    mutate(`DRD2 rs12364283 dom` = str_replace(`DRD2 rs12364283`, 'G/A', 'GG')) %>%
+    relocate(`DRD2 rs12364283 dom`, .before = `DRD2 rs12364283`) %>%
+
+    mutate(`DRD2 rs1800497 dom` = str_replace(`DRD2 rs1800497`, 'C/T', 'TT')) %>%
+    relocate(`DRD2 rs1800497 dom`, .before = `DRD2 rs1800497`)
+
+genotypes[["DRD2 rs1076560 dom"]] <-  c("CC", "AA")
+genotypes[["DRD2 rs12364283 dom"]] <-  c("GG", "AA")
+genotypes[["DRD2 rs1800497 dom"]] <-  c("CC", "TT")
+
 anova_results <- compute_anova(drd2, parameters, names(genotypes))
 anova_results <- as_tibble(anova_results)
 ```
