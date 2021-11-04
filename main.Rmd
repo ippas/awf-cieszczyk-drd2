@@ -10,7 +10,7 @@ knit: (function(input, ...) {
     rmarkdown::render(
       input,
       output_file = paste0(
-        xfun::sans_ext(input), '-tmp.html'
+        xfun::sans_ext(input), '-comments.html'
       ),
       envir = globalenv()
     )
@@ -49,10 +49,6 @@ library(scales)
 ```
 
 
-## Wczytanie danych
-
-Wejściowy arkusz został nieco zmodyfikowany - usunięte scalenia komórek w nagłówku. Poniżej znajdują się otrzymane dane.
-
 ```{r, message=FALSE}
 read_drd2_excel <- function(path){
     raw_data <- read_excel(path)
@@ -70,68 +66,9 @@ read_drd2_excel <- function(path){
         mutate(id = paste(`Nr`, `Lp.`, sep='_'))
 }
 
-(drd2 <- read_drd2_excel('data/wyniki-DRD2-unmerged-header.xls'))
+drd2 <- read_drd2_excel('data/wyniki-DRD2-unmerged-header.xls')
 ```
 
-## Przegląd danych
-
-Obliczając wzrost uczestników na podstawie BMI i masy ciała w niektórych przypadkach otrzymujemy różne wartości przed i po treningu. W tabeli poniżej są przypadki, gdy różnica ta wyniosła powyżej 2cm.
-```{r}
-drd2 %>% 
-    mutate(height_przed = sqrt(`Masa ciała (kg)_przed` / `Indeks masy ciała BMI_przed`)) %>% 
-    mutate(height_po = sqrt(`Masa ciała (kg)_po` / `Indeks masy ciała BMI_po`)) %>% 
-    mutate(height_diff = abs(height_przed - height_po) * 100) %>% 
-    arrange(desc(height_diff)) %>% 
-    select(`Lp.`, Nr, contains('height_diff'), contains('Masa ciała'), contains('BMI')) %>% 
-    filter(height_diff > 2) %>%
-    arrange(`Lp.`) %>% 
-    mutate(height_diff = round(height_diff, 2)) %>% 
-    kbl() %>% 
-    kable_styling(bootstrap_options = c("bordered", "hover", "condensed")) %>% 
-    column_spec(3, background = "#ecc6c6")
-
-
-# drd2_training
-# ggboxplot(drd2_training, x = c("Training", "DRD2 rs1076560"), y = "Indeks BMR (kJ)",
-#                 color = "DRD2 rs1076560", palette =c("#00AFBB", "#E7B800", "#FC4E07"),
-#                 add = "jitter", shape = "DRD2 rs1076560")
-```
-
-Przeliczając indeks BMR z _kJ_ na _kcal_ również otrzymujemy różne wartości. W niektórych przypadkach są one dosyć znaczne. W tabeli poniżej znajdują się te wiersze, gdzie ta różnica wyniosła powyżej 5kcal.
-```{r}
-r <- 0.239005736
-
-drd2 %>% 
-    mutate(`BMR kJ_przed (kcal)` = `Indeks BMR (kJ)_przed` * r) %>% 
-    mutate(`BMR kJ_po (kcal)` = `Indeks BMR (kJ)_po` * r) %>% 
-    mutate(`BMR diff przed (kcal)` = abs(`Indeks BMR (kcal)_przed` - `BMR kJ_przed (kcal)`)) %>% 
-    mutate(`BMR diff po (kcal)` = abs(`Indeks BMR (kcal)_po` - `BMR kJ_po (kcal)`)) %>% 
-    select(`Lp.`, Nr, contains('diff'), contains('BMR (')) %>% 
-    filter(`BMR diff przed (kcal)` > 5 | `BMR diff po (kcal)` > 5) %>% 
-    kbl() %>% 
-    kable_styling(bootstrap_options = c("bordered", "hover", "condensed")) %>% 
-    column_spec(c(3, 4), background = "#ecc6c6")
-```
-
-Procentowa masa tłuszczowa została porownana ze stosunkiem masy tłuszczowej w kg do całkowitej masy ciała. W ten sposób pojawiło się kilka rozbieżności.
-
-```{r}
-drd2 %>% 
-    select(`Lp.`, Nr, contains('Masa ciała'), contains('masy tłuszczowej')) %>% 
-    mutate(`Masa tłuszczowa %_przed` = `Wielkość masy tłuszczowej (kg)_przed` / `Masa ciała (kg)_przed` * 100) %>% 
-    mutate(`Masa tłuszczowa %_po` = `Wielkość masy tłuszczowej (kg)_po` / `Masa ciała (kg)_po` * 100) %>% 
-    mutate(`Masa tłuszczowa diff_przed` = abs(`Masa tłuszczowa %_przed` - `Procent masy tłuszczowej (%)_przed`)) %>% 
-    mutate(`Masa tłuszczowa diff_po` = abs(`Masa tłuszczowa %_po` - `Procent masy tłuszczowej (%)_po`)) %>% 
-    filter(`Masa tłuszczowa diff_przed` > 0.5) %>% 
-    filter(`Masa tłuszczowa diff_po` > 0.5) %>%  
-    select(`Lp.`, Nr, contains('diff'), everything()) %>% 
-    kbl() %>% 
-    kable_styling(bootstrap_options = c("bordered", "hover", "condensed")) %>% 
-    column_spec(c(3, 4), background = "#ecc6c6")
-```
-
-
-## Hardy-Weinberg equilibrium
 
 ```{r include=FALSE}
 drd2 %>% 
@@ -144,33 +81,12 @@ genotypes <- list(
   "DRD2 rs1800497" = c("CC", "C/T", "TT"),
   "DRD2 rs1800498" = c("CC", "C/T", "TT")
 )
-
-
-check_hw_equilibrium <- function(data, rsids){
-    pvals <- numeric()
-    for (rs_name in names(genotypes)) {
-        rs <- factor(pull(data, rs_name), levels = genotypes[[rs_name]])
-        stopifnot(!is.na(rs))
-        
-        genotype_counts <- table(rs)
-        X <- as.vector(genotype_counts)
-        names(X) <- c("AA", "AB", "BB")
-        
-        result <- HWChisq(X, verbose = FALSE)
-        pvals <- c(pvals, result$pval)
-    }
-    return(pvals)
-}
-
-hw_chisq_pvals <- check_hw_equilibrium(drd2, names(genotypes))
 ```
-
-```{r}
-tibble(rs = names(genotypes), p = hw_chisq_pvals)
-```
-
 
 ## Two-way mixed ANOVA
+
+**Powtórzona analiza w modelu dominującym dla SNP z bardzo małą liczbą homozygot (n <= 6)**
+
 ```{r list_parameters}
 get_params <- function(data){
     data %>% 
@@ -369,8 +285,10 @@ anova_summary_table <- function(data, anova_data, rsid) {
 }
 
 for (rsid in names(genotypes)) {
-    anova_summary_table(drd2_training, anova_results, rsid) %>% 
-        print
+    if (str_detect(rsid, "dom")) {
+        anova_summary_table(drd2_training, anova_results, rsid) %>%
+            print
+    }
 }
 ```
 
@@ -380,6 +298,8 @@ for (rsid in names(genotypes)) {
 Bez parametru _Kontrola lipidogramu_.
 
 Zmienną zależną jest procentowa zmiana parametru: $\left(\frac{param_{po}}{param_{przed}} - 1\right) \cdot 100$
+
+**Uwzględniono wartość początkową jako dodatkową zmienną niezależną**
 
 ```{r}
 split_snps <- function(data) {
