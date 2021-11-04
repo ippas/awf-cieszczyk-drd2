@@ -293,7 +293,7 @@ data_w %>%
     pull(y) %>% hist
 ```
 
-```{r results='asis', message=FALSE}
+```{r results='asis'}
 suff_cut <- function(df, n){
     df %>% 
         select(contains('_przed'), contains('_po')) %>% 
@@ -306,7 +306,7 @@ suff_cut <- function(df, n){
 compute_group_mean_sd <- function(data, rsid, params = parameters) {
     data %>% 
         group_by(across(c(all_of(rsid), Training))) %>% 
-        summarise(n = n()) ->
+        summarise(n = n(), .groups = 'keep') ->
         data_counts
     data %>% 
         group_by(across(c(all_of(rsid), Training))) %>% 
@@ -409,7 +409,7 @@ split_snps <- function(data) {
 # drd2_alleles <- split_snps(drd2)
 ```
  
-```{r message=FALSE, results='asis'}
+```{r results='asis'}
 compute_training_ratio <- function(data, params = parameters){
     ratio <- function(x, y) {
         (x / y - 1) * 100
@@ -466,7 +466,11 @@ analyse_haplotypes <- function(data) {
         as_tibble(sh$coefficients, rownames = "geno") %>%
             mutate(param = param) ->
             haplo_to_join
-        haplo <- full_join(haplo, haplo_to_join)
+        haplo <- full_join(
+            haplo,
+            haplo_to_join,
+            by = c("geno", "coef", "se", "t.stat", "pval", "param")
+        )
     }
     return(list("haplo" = haplo, "sh" = sh))
 }
