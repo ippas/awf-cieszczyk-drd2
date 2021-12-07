@@ -374,6 +374,52 @@ for (rsid in names(genotypes)) {
 }
 ```
 
+### Post hoc analysis for a significant interaction: Indeks BMR (kJ) x DRD2 rs1076560
+
+```{r, message=FALSE, warning=FALSE}
+drd2_post_hoc <- drd2 %>%
+    rename(
+        group = `DRD2 rs1076560`,
+        t1 = `Indeks BMR (kJ)_przed`,
+        t2 = `Indeks BMR (kJ)_po`
+    ) %>%
+    select(id, group, t1, t2) %>%
+    gather(key = "time", value = "score", t1, t2)
+
+
+# Kolmogorov-Smirnov test
+drd2_post_hoc %>%
+  group_by(group, time) %>%
+  select(-id) %>%
+  summarize(
+      ks = ks.test(score, "pnorm", mean = mean(score), sd = sd(score))$p.value
+  ) %>%
+  kbl(digits = 3, caption = "Kolmogorov-Smirnov test") %>%
+  kable_styling(font_size = 12, bootstrap_options = c("bordered", "hover", "condensed"))
+
+# qqplot
+ggqqplot(drd2_post_hoc, "score") + facet_grid(time ~ group)
+
+drd2_post_hoc %>%
+  group_by(time) %>%
+  anova_test(dv = score, wid = id, between = group) %>%
+  get_anova_table() %>%
+  adjust_pvalue(method = "bonferroni") %>%
+  as_tibble() %>%
+  select(-DFn, -DFd, -`F`, -`p<.05`, -ges) %>%
+  kbl(digits = 3, caption = "One-way ANOVA - trening") %>%
+  kable_styling(font_size = 12, bootstrap_options = c("bordered", "hover", "condensed"))
+
+drd2_post_hoc %>%
+  group_by(group) %>%
+  anova_test(dv = score, wid = id, within = time) %>%
+  get_anova_table() %>%
+  adjust_pvalue(method = "bonferroni") %>%
+  as_tibble() %>%
+  kbl(digits = 3, caption = "One-way ANOVA - SNP rs1076560") %>%
+  kable_styling(font_size = 12, bootstrap_options = c("bordered", "hover", "condensed"))
+```
+
 
 ## Analiza haplotypów
 
